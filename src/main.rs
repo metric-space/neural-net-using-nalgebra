@@ -11,6 +11,7 @@ use rand_distr::StandardNormal;
 // ================== IO Utils =======================================================
 
 use std::fs;
+use std::ops::AddAssign;
 
 fn mnist_data() -> Vec<(OVector<f64, Dynamic>, OVector<f64, Dynamic>)> {
     let mut result = Vec::new();
@@ -42,6 +43,8 @@ where
     layers: Vec<usize>,
     weights: Vec<OMatrix<T, Dynamic, Dynamic>>,
     biases: Vec<OVector<T, Dynamic>>,
+    weight_zeros: Vec<OMatrix<T, Dynamic, Dynamic>> ,
+    bias_zeros: Vec<OVector<T, Dynamic>>
 }
 
 fn initialize(layers: Vec<usize>) -> FeedForward<f64>
@@ -66,10 +69,28 @@ fn initialize(layers: Vec<usize>) -> FeedForward<f64>
         ));
     }
 
+    let mut weight_zeros = Vec::new();
+    let mut bias_zeros = Vec::new();
+
+    let l = layers.len();
+
+    for i in 1..l {
+        weight_zeros.push(OMatrix::<f64, Dynamic, Dynamic>::zeros_generic(
+            Dynamic::new(layers[i]),
+            Dynamic::new(layers[i - 1]),
+        ));
+        bias_zeros.push(OVector::<f64, Dynamic>::zeros_generic(
+            Dynamic::new(layers[i]),
+            Const::<1>,
+        ));
+    }
+
     FeedForward {
         layers,
         weights,
         biases,
+        weight_zeros,
+        bias_zeros
     }
 }
 
@@ -114,22 +135,8 @@ where
         DefaultAllocator: na::allocator::Allocator<T, Const<1>, Dynamic>,
     {
         // zeros
-        let mut weight_errors = Vec::new();
-        let mut bias_errors = Vec::new();
-
-        let l = self.layers.len();
-
-        // TODO: try to reinitialize this only once?
-        for i in 1..l {
-            weight_errors.push(OMatrix::<T, Dynamic, Dynamic>::zeros_generic(
-                Dynamic::new(self.layers[i]),
-                Dynamic::new(self.layers[i - 1]),
-            ));
-            bias_errors.push(OVector::<T, Dynamic>::zeros_generic(
-                Dynamic::new(self.layers[i]),
-                Const::<1>,
-            ));
-        }
+        let mut weight_errors = self.weight_zeros.clone();
+        let mut bias_errors = self.bias_zeros.clone();
 
         // calculate the
         // in reverse
@@ -147,6 +154,8 @@ where
         let mut a_collection: Vec<OVector<T, Dynamic>> = Vec::new();
 
         a_collection.push(test_vector.clone());
+
+        let l = self.layers.len();
 
         for i in 0..(l - 1) {
             //println!("{:?}", &self.weights[i].shape());
@@ -189,45 +198,26 @@ where
     where
         DefaultAllocator: na::allocator::Allocator<T, Const<1>, Dynamic>,
     {
-        let mut ww = Vec::new();
-        let mut bb = Vec::new();
-
-        let l = self.layers.len();
-
-        // TODO: have to correct this
-        for i in 1..l {
-            //println!("{}",i);
-            ww.push(OMatrix::<T, Dynamic, Dynamic>::zeros_generic(
-                Dynamic::new(self.layers[i]),
-                Dynamic::new(self.layers[i - 1]),
-            ));
-            bb.push(OVector::<T, Dynamic>::zeros_generic(
-                Dynamic::new(self.layers[i]),
-                Const::<1>,
-            ));
-        }
+        let mut ww = self.weight_zeros.clone();
+        let mut bb = self.bias_zeros.clone();
 
         for (x, y) in &batch {
             let (ws, bs) = self.backprop(x, y);
 
-            ww = ww.iter().zip(ws.iter()).map(|(x, y)| x + y).collect();
-            bb = bb.iter().zip(bs.iter()).map(|(x, y)| x + y).collect();
+            ww.iter_mut().zip(ws.iter()).for_each(|(x, y)| x.add_assign(y));
+            bb.iter_mut().zip(bs.iter()).for_each(|(x, y)| x.add_assign(y));
         }
 
         let bl: T = T::from_usize(batch.len()).unwrap();
 
-        self.weights = self
-            .weights
-            .iter()
+         self.weights
+            .iter_mut()
             .zip(ww.iter())
-            .map(|(x, y)| x + (y * (-eta.clone() / bl.clone())))
-            .collect();
-        self.biases = self
-            .biases
-            .iter()
+            .for_each(|(x, y)| x.add_assign(y * (-eta.clone() / bl.clone())));
+        self.biases
+            .iter_mut()
             .zip(bb.iter())
-            .map(|(x, y)| x + (y * (-eta.clone() / bl.clone())))
-            .collect();
+            .for_each(|(x, y)| x.add_assign(y * (-eta.clone() / bl.clone())));
     }
 
     fn sgd(

@@ -43,12 +43,11 @@ where
     layers: Vec<usize>,
     weights: Vec<OMatrix<T, Dynamic, Dynamic>>,
     biases: Vec<OVector<T, Dynamic>>,
-    weight_zeros: Vec<OMatrix<T, Dynamic, Dynamic>> ,
-    bias_zeros: Vec<OVector<T, Dynamic>>
+    weight_zeros: Vec<OMatrix<T, Dynamic, Dynamic>>,
+    bias_zeros: Vec<OVector<T, Dynamic>>,
 }
 
-fn initialize(layers: Vec<usize>) -> FeedForward<f64>
-{
+fn initialize(layers: Vec<usize>) -> FeedForward<f64> {
     let sizes = layers.len();
 
     let mut weights = Vec::new();
@@ -90,7 +89,7 @@ fn initialize(layers: Vec<usize>) -> FeedForward<f64>
         weights,
         biases,
         weight_zeros,
-        bias_zeros
+        bias_zeros,
     }
 }
 
@@ -166,29 +165,18 @@ where
             a_collection.push(z.clone().map(|x| sigmoid(x)));
         }
 
-        // TODO: initialize this elsewhere to prevent build from scratch all the time?
-        let mut errors: Vec<OVector<T, Dynamic>> = Vec::new();
-        for i in 1..l {
-            errors.push(OVector::<T, Dynamic>::zeros_generic(
-                Dynamic::new(self.layers[i]),
-                Const::<1>,
-            ));
-        }
-
         for (e, i) in (0..l - 1).rev().enumerate() {
             let err: OVector<T, Dynamic>;
             if e == 0 {
                 err = cost_gradient(&expected_vector.clone(), &a_collection[i + 1])
                     .component_mul(&z_collection[i].map(|x| sigmoid_prime(x)));
             } else {
-                err = (self.weights[i + 1].transpose() * &errors[i + 1])
+                err = (self.weights[i + 1].transpose() * &bias_errors[i + 1])
                     .component_mul(&z_collection[i].map(|x| sigmoid_prime(x)));
             }
 
-            errors.push(err.clone());
-
             weight_errors[i] = err.clone() * (a_collection[i].transpose());
-            bias_errors[i] = err.clone();
+            bias_errors[i] = err.clone(); // huh? huh?
         }
 
         (weight_errors, bias_errors)
@@ -204,13 +192,17 @@ where
         for (x, y) in &batch {
             let (ws, bs) = self.backprop(x, y);
 
-            ww.iter_mut().zip(ws.iter()).for_each(|(x, y)| x.add_assign(y));
-            bb.iter_mut().zip(bs.iter()).for_each(|(x, y)| x.add_assign(y));
+            ww.iter_mut()
+                .zip(ws.iter())
+                .for_each(|(x, y)| x.add_assign(y));
+            bb.iter_mut()
+                .zip(bs.iter())
+                .for_each(|(x, y)| x.add_assign(y));
         }
 
         let bl: T = T::from_usize(batch.len()).unwrap();
 
-         self.weights
+        self.weights
             .iter_mut()
             .zip(ww.iter())
             .for_each(|(x, y)| x.add_assign(y * (-eta.clone() / bl.clone())));
@@ -257,7 +249,7 @@ where
 }
 
 fn main() {
-    let x: Vec<usize> = Vec::from([784, 30, 10]);
+    let x: Vec<usize> = Vec::from([784, 100, 10]);
     let mut f: FeedForward<f64> = initialize(x);
     let mut data = mnist_data();
     let l = data.len();
@@ -266,5 +258,5 @@ fn main() {
 
     let training_data = (&data[0..training_l]).to_vec();
     let testing_data = (&data[training_l..]).to_vec();
-    f.sgd(training_data, testing_data, 30, 10, 1.0);
+    f.sgd(training_data, testing_data, 30, 10, 3.0);
 }

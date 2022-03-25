@@ -12,7 +12,7 @@ use rand_distr::StandardNormal;
 
 use std::fs;
 
-fn a() -> Vec<(OVector<f64, Dynamic>, OVector<f64, Dynamic>)> {
+fn mnist_data() -> Vec<(OVector<f64, Dynamic>, OVector<f64, Dynamic>)> {
     let mut result = Vec::new();
     for i in 0..10 {
         let x = fs::read(format!("./data/{}", i)).unwrap();
@@ -45,9 +45,6 @@ where
 }
 
 fn initialize(layers: Vec<usize>) -> FeedForward<f64>
-where
-    DefaultAllocator:
-        na::allocator::Allocator<f64, Dynamic, Dynamic> + na::allocator::Allocator<f64, Dynamic>,
 {
     let sizes = layers.len();
 
@@ -272,7 +269,7 @@ where
 fn main() {
     let x: Vec<usize> = Vec::from([784, 30, 10]);
     let mut f: FeedForward<f64> = initialize(x);
-    let mut data = a();
+    let mut data = mnist_data();
     let l = data.len();
     data.shuffle(&mut thread_rng());
     let training_l = (0.7 * l.to_f64().unwrap()).to_usize().unwrap();

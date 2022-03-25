@@ -1,43 +1,53 @@
-#[macro_use]
 extern crate nalgebra as na;
 
 use na::{
-    ComplexField, Const, DefaultAllocator, Dim, DimName, Dynamic, OMatrix, OVector, RealField,
-    Scalar,
+    ComplexField, Const, DefaultAllocator, Dim, Dynamic, OMatrix, OVector, RealField, Scalar,
 };
 use num::ToPrimitive;
-use rand::distributions::{Distribution, Standard};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use rand_distr::StandardNormal;
 
-// vector of vector of floats
+// ================== IO Utils =======================================================
 
-// nalgebra by default is column vector centric
+use std::fs;
 
-//trait NN {
-//    Output
-//    fn forward(self) -> OVector<T,D> ; // gives a vector dependent on the
-//    fn backprop(self) -> (OMatrix<T,D,D>, OVector<T,D>); // gives back a tuples of matrices?
-//    fn initialize(layers: Vec<T>) -> Self;
-//    fn update(&mut self);
-//}
+fn a() -> Vec<(OVector<f64, Dynamic>, OVector<f64, Dynamic>)> {
+    let mut result = Vec::new();
+    for i in 0..10 {
+        let x = fs::read(format!("./data/{}", i)).unwrap();
+        let mut z: Vec<f64> = vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        z[i] = 1.0;
 
-struct FeedForward<T: Scalar, D: Dim>
-where
-    DefaultAllocator: na::allocator::Allocator<T, D, D> + na::allocator::Allocator<T, D>,
-{
-    layers: Vec<usize>,
-    weights: Vec<OMatrix<T, D, D>>,
-    biases: Vec<OVector<T, D>>,
+        for j in x.chunks(28 * 28) {
+            let y = j.to_vec();
+            let g: Vec<f64> = y.iter().map(|x| *x as f64).collect();
+
+            result.push((
+                OVector::<f64, Dynamic>::from_vec(g),
+                OVector::<f64, Dynamic>::from_vec(z.clone()),
+            ));
+        }
+    }
+    result
 }
 
-// fuck traits ans structs for now
+// ==================================================================================
 
-fn initialize(layers: Vec<usize>) -> FeedForward<f64, Dynamic>
+struct FeedForward<T: Scalar + RealField>
+where
+    DefaultAllocator:
+        na::allocator::Allocator<T, Dynamic, Dynamic> + na::allocator::Allocator<T, Dynamic>,
+{
+    layers: Vec<usize>,
+    weights: Vec<OMatrix<T, Dynamic, Dynamic>>,
+    biases: Vec<OVector<T, Dynamic>>,
+}
+
+fn initialize(layers: Vec<usize>) -> FeedForward<f64>
 where
     DefaultAllocator:
         na::allocator::Allocator<f64, Dynamic, Dynamic> + na::allocator::Allocator<f64, Dynamic>,
-    Standard: Distribution<f64>,
 {
     let sizes = layers.len();
 
@@ -45,28 +55,31 @@ where
     let mut biases = Vec::new();
 
     for i in 1..sizes {
-        weights.push(OMatrix::<f64, Dynamic, Dynamic>::new_random_generic(
+        weights.push(OMatrix::<f64, Dynamic, Dynamic>::from_distribution_generic(
             Dynamic::new(layers[i]),
             Dynamic::new(layers[i - 1]),
+            &StandardNormal,
+            &mut thread_rng(),
         ));
-        biases.push(OVector::<f64, Dynamic>::new_random_generic(
+        biases.push(OVector::<f64, Dynamic>::from_distribution_generic(
             Dynamic::new(layers[i]),
             Const::<1>,
+            &StandardNormal,
+            &mut thread_rng(),
         ));
     }
 
     FeedForward {
-        layers: layers,
-        weights: weights,
-        biases: biases,
+        layers,
+        weights,
+        biases,
     }
 }
 
-// sigma
 fn sigmoid<T: Scalar + RealField>(x: T) -> T {
-    T::zero() / (T::one() + <T as ComplexField>::powf(T::e(), -x))
+    T::one() / (T::one() + <T as ComplexField>::powf(T::e(), -x))
 }
-// sigma prime
+
 fn sigmoid_prime<T: Scalar + RealField>(x: T) -> T {
     let x_ = sigmoid(x);
     x_.clone() * (T::one() - x_)
@@ -83,24 +96,25 @@ where
     return a - y;
 }
 
-impl<T: Scalar + RealField, D: DimName> FeedForward<T, D>
+impl<T: Scalar + RealField> FeedForward<T>
 where
-    DefaultAllocator: na::allocator::Allocator<T, D, D> + na::allocator::Allocator<T, D>,
+    DefaultAllocator:
+        na::allocator::Allocator<T, Dynamic, Dynamic> + na::allocator::Allocator<T, Dynamic>,
 {
-    fn forward(&self, input: OVector<T, D>) -> OVector<T, D> {
+    fn forward(&self, input: OVector<T, Dynamic>) -> OVector<T, Dynamic> {
         self.weights
             .iter()
             .zip(self.biases.iter())
-            .fold(input.clone(), |acc, (w, b)| w * acc + b)
+            .fold(input.clone(), |acc, (w, b)| (w * acc + b).map(sigmoid))
     }
 
     fn backprop(
         &self,
-        test_vector: &OVector<T, D>,
-        expected_vector: &OVector<T, D>,
-    ) -> (Vec<OMatrix<T, D, D>>, Vec<OVector<T, D>>)
+        test_vector: &OVector<T, Dynamic>,
+        expected_vector: &OVector<T, Dynamic>,
+    ) -> (Vec<OMatrix<T, Dynamic, Dynamic>>, Vec<OVector<T, Dynamic>>)
     where
-        DefaultAllocator: na::allocator::Allocator<T, Const<1>, D>,
+        DefaultAllocator: na::allocator::Allocator<T, Const<1>, Dynamic>,
     {
         // zeros
         let mut weight_errors = Vec::new();
@@ -108,16 +122,16 @@ where
 
         let l = self.layers.len();
 
-        // this is to be filled up
-        // TODO: do I really need this?
-        //for i in 1..l {
-        //    weight_errors.push(OMatrix::<T, Dynamic, Dynamic>::zeros_generic(Dynamic::new(self.layers[i]), Dynamic::new(self.layers[i-1])));
-        //    bias_errors.push(OVector::<T, Dynamic>::zeros_generic(Dynamic::new(self.layers[i]), Const::<1>));
-        //}
-
+        // TODO: try to reinitialize this only once?
         for i in 1..l {
-            weight_errors.push(OMatrix::<T, D, D>::zeros());
-            bias_errors.push(OVector::<T, D>::zeros());
+            weight_errors.push(OMatrix::<T, Dynamic, Dynamic>::zeros_generic(
+                Dynamic::new(self.layers[i]),
+                Dynamic::new(self.layers[i - 1]),
+            ));
+            bias_errors.push(OVector::<T, Dynamic>::zeros_generic(
+                Dynamic::new(self.layers[i]),
+                Const::<1>,
+            ));
         }
 
         // calculate the
@@ -132,40 +146,51 @@ where
         // sequentially generate vectors of a
         // and then in reverse start calculating errors
 
-        let mut z_collection: Vec<OVector<T, D>> = Vec::new();
-        let mut a_collection: Vec<OVector<T, D>> = Vec::new();
+        let mut z_collection: Vec<OVector<T, Dynamic>> = Vec::new();
+        let mut a_collection: Vec<OVector<T, Dynamic>> = Vec::new();
 
-        for i in 1..l {
-            let z = &self.weights[i] * test_vector + &self.biases[i];
+        a_collection.push(test_vector.clone());
+
+        for i in 0..(l - 1) {
+            //println!("{:?}", &self.weights[i].shape());
+            //println!("{:?}", test_vector.shape());
+            //println!("{:?}", &self.biases[i].shape());
+            let z = &self.weights[i] * &a_collection[i] + &self.biases[i];
             z_collection.push(z.clone());
             a_collection.push(z.clone().map(|x| sigmoid(x)));
         }
 
-        let mut errors: Vec<OVector<T, D>> = Vec::new();
+        // TODO: initialize this elsewhere to prevent build from scratch all the time?
+        let mut errors: Vec<OVector<T, Dynamic>> = Vec::new();
+        for i in 1..l {
+            errors.push(OVector::<T, Dynamic>::zeros_generic(
+                Dynamic::new(self.layers[i]),
+                Const::<1>,
+            ));
+        }
 
-        for i in (1..l).rev() {
-            let err: OVector<T, D>;
-            if i == l {
-                err = cost_gradient(&expected_vector.clone(), &a_collection[i])
+        for (e, i) in (0..l - 1).rev().enumerate() {
+            let err: OVector<T, Dynamic>;
+            if e == 0 {
+                err = cost_gradient(&expected_vector.clone(), &a_collection[i + 1])
                     .component_mul(&z_collection[i].map(|x| sigmoid_prime(x)));
             } else {
-                err = (self.weights[i].transpose() * &errors[i - 1])
-                    .component_mul(&z_collection[i - 1].map(|x| sigmoid_prime(x)));
+                err = (self.weights[i + 1].transpose() * &errors[i + 1])
+                    .component_mul(&z_collection[i].map(|x| sigmoid_prime(x)));
             }
 
-            // TODO: do I really need this?
             errors.push(err.clone());
 
-            weight_errors[i] = err.clone() * (a_collection[i - 1].transpose());
+            weight_errors[i] = err.clone() * (a_collection[i].transpose());
             bias_errors[i] = err.clone();
         }
 
         (weight_errors, bias_errors)
     }
 
-    fn update(&mut self, batch: Vec<(OVector<T, D>, OVector<T, D>)>, eta: T)
+    fn update(&mut self, batch: Vec<(OVector<T, Dynamic>, OVector<T, Dynamic>)>, eta: T)
     where
-        DefaultAllocator: na::allocator::Allocator<T, Const<1>, D>,
+        DefaultAllocator: na::allocator::Allocator<T, Const<1>, Dynamic>,
     {
         let mut ww = Vec::new();
         let mut bb = Vec::new();
@@ -174,8 +199,15 @@ where
 
         // TODO: have to correct this
         for i in 1..l {
-            ww.push(OMatrix::<T, D, D>::zeros());
-            bb.push(OVector::<T, D>::zeros());
+            //println!("{}",i);
+            ww.push(OMatrix::<T, Dynamic, Dynamic>::zeros_generic(
+                Dynamic::new(self.layers[i]),
+                Dynamic::new(self.layers[i - 1]),
+            ));
+            bb.push(OVector::<T, Dynamic>::zeros_generic(
+                Dynamic::new(self.layers[i]),
+                Const::<1>,
+            ));
         }
 
         for (x, y) in &batch {
@@ -203,13 +235,13 @@ where
 
     fn sgd(
         &mut self,
-        training_data: Vec<(OVector<T, D>, OVector<T, D>)>,
-        test_data: Vec<(OVector<T, D>, OVector<T, D>)>,
+        training_data: Vec<(OVector<T, Dynamic>, OVector<T, Dynamic>)>,
+        test_data: Vec<(OVector<T, Dynamic>, OVector<T, Dynamic>)>,
         epochs: usize,
         batch_size: usize,
         eta: T,
     ) where
-        DefaultAllocator: na::allocator::Allocator<T, Const<1>, D>,
+        DefaultAllocator: na::allocator::Allocator<T, Const<1>, Dynamic>,
     {
         for i in 1..epochs {
             let mut training_ = training_data.clone();
@@ -224,7 +256,7 @@ where
         }
     }
 
-    fn evaluate(&self, test_data: &Vec<(OVector<T, D>, OVector<T, D>)>) -> f32 {
+    fn evaluate(&self, test_data: &Vec<(OVector<T, Dynamic>, OVector<T, Dynamic>)>) -> f32 {
         let mut success = 0.0;
         for (x, y) in test_data {
             let a = self.forward(x.clone());
@@ -238,8 +270,14 @@ where
 }
 
 fn main() {
-    println!("Hello, world!");
+    let x: Vec<usize> = Vec::from([784, 30, 10]);
+    let mut f: FeedForward<f64> = initialize(x);
+    let mut data = a();
+    let l = data.len();
+    data.shuffle(&mut thread_rng());
+    let training_l = (0.7 * l.to_f64().unwrap()).to_usize().unwrap();
 
-    let x: Vec<usize> = Vec::from([700, 50, 10]);
-    let a: FeedForward<f64, Dynamic> = initialize(x);
+    let training_data = (&data[0..training_l]).to_vec();
+    let testing_data = (&data[training_l..]).to_vec();
+    f.sgd(training_data, testing_data, 30, 10, 1.0);
 }

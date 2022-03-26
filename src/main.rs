@@ -22,7 +22,7 @@ fn mnist_data() -> Vec<(OVector<f64, Dynamic>, OVector<f64, Dynamic>)> {
 
         for j in x.chunks(28 * 28) {
             let y = j.to_vec();
-            let g: Vec<f64> = y.iter().map(|x| *x as f64).collect();
+            let g: Vec<f64> = y.iter().map(|x| (*x as f64)/255.0).collect();
 
             result.push((
                 OVector::<f64, Dynamic>::from_vec(g),
